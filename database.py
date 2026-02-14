@@ -2,11 +2,10 @@ import os
 from datetime import datetime
 import random
 import string
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, BigInteger, Text
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, BigInteger, Text, inspect
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.dialects.postgresql import UUID
-import uuid
+from sqlalchemy import text
 
 Base = declarative_base()
 
@@ -48,12 +47,31 @@ class Database:
             database_url,
             pool_size=5,
             max_overflow=10,
-            pool_pre_ping=True  # Render uchun muhim
+            pool_pre_ping=True
         )
         
-        # Create tables
-        Base.metadata.create_all(self.engine)
+        # Jadvallarni xavfsiz yaratish (agar mavjud bo'lmasa)
+        self.create_tables_safely()
+        
         self.Session = sessionmaker(bind=self.engine)
+    
+    def create_tables_safely(self):
+        """Jadvallarni xavfsiz yaratish - mavjud bo'lsa, o'chirib tashlamaydi"""
+        inspector = inspect(self.engine)
+        
+        # users jadvali mavjudligini tekshirish
+        if not inspector.has_table('users'):
+            User.__table__.create(self.engine)
+            print("✅ users jadvali yaratildi")
+        else:
+            print("✅ users jadvali allaqachon mavjud")
+        
+        # referrals jadvali mavjudligini tekshirish
+        if not inspector.has_table('referrals'):
+            Referral.__table__.create(self.engine)
+            print("✅ referrals jadvali yaratildi")
+        else:
+            print("✅ referrals jadvali allaqachon mavjud")
     
     def generate_referral_code(self, user_id):
         code = f"REF{user_id}{''.join(random.choices(string.ascii_uppercase + string.digits, k=5))}"
@@ -99,8 +117,6 @@ class Database:
                         referrer.referrals_count += 1
             
             session.commit()
-            
-            # Refresh to get updated data
             session.refresh(new_user)
             return new_user
             
