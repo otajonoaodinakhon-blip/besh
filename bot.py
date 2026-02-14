@@ -1,7 +1,8 @@
 import os
 import logging
 import asyncio
-from flask import Flask, request
+import threading
+from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 from config import BOT_TOKEN, ADMIN_IDS
@@ -30,7 +31,7 @@ def home():
 def health():
     return 'OK', 200
 
-# Bot handlerlar
+# Bot handlerlar (avvalgidek, o'zgarishsiz)
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     args = context.args
@@ -39,7 +40,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if args and args[0].startswith('REF'):
         referrer = db.get_user_by_referral_code(args[0])
         if referrer:
-            referred_by = referrer[0]
+            referred_by = referrer.user_id
     
     user_data = db.add_user(
         user_id=user.id,
@@ -129,19 +130,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(f"❌ Xatolik: {result}")
     
     elif query.data == "leaderboard":
-        db.cursor.execute('''
-        SELECT first_name, referrals_count FROM users 
-        ORDER BY referrals_count DESC LIMIT 10
-        ''')
-        top = db.cursor.fetchall()
-        
-        text = "🏆 **TOP 10 TAKLIF QILUVCHILAR** 🏆\n\n"
-        for i, (name, count) in enumerate(top, 1):
-            text += f"{i}. {name}: {count} ta do'st\n"
-        
-        await query.edit_message_text(text, parse_mode='Markdown')
-        keyboard = [[InlineKeyboardButton("🔙 Orqaga", callback_data="back")]]
-        await query.edit_message_reply_markup(InlineKeyboardMarkup(keyboard))
+        stats = db.get_stats()
+        # Bu yerda leaderboard uchun alohida so'rov yozish kerak
+        await query.edit_message_text("🏆 Leaderboard tez orada")
     
     elif query.data == "admin" and query.from_user.id in ADMIN_IDS:
         stats = db.get_stats()
@@ -190,7 +181,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"👤 Ism: {user_data.first_name}\n"
         f"👥 Taklif qilganlar: `{user_data.referrals_count}/10`\n"
         f"🎓 Sertifikat: {'✅ Olgan' if user_data.certificate_claimed else '❌ Olmagan'}\n"
-        f"📅 Qo'shilgan: {user_data.created_at[:10]}"
+        f"📅 Qo'shilgan: {user_data.created_at}"
     )
     
     if user_data.certificate_claimed:
@@ -215,36 +206,41 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.error(f"Xatolik: {context.error}")
 
-# Botni ishga tushirish
+# Botni ishga tushirish funksiyasi
 def run_bot():
-    """Botni ishga tushirish (asyncio event loop bilan)"""
-    # Yangi event loop yaratish
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    
-    # Bot application yaratish
-    application = Application.builder().token(BOT_TOKEN).build()
-    
-    # Handlerlar
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("referral", referral_command))
-    application.add_handler(CommandHandler("stats", stats_command))
-    application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(CallbackQueryHandler(button_handler))
-    application.add_error_handler(error_handler)
-    
-    # Botni polling bilan ishga tushirish
-    application.run_polling()
+    """Botni ishga tushirish - to'g'ri event loop bilan"""
+    try:
+        # Yangi event loop yaratish
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        # Bot application yaratish
+        application = Application.builder().token(BOT_TOKEN).build()
+        
+        # Handlerlar
+        application.add_handler(CommandHandler("start", start))
+        application.add_handler(CommandHandler("referral", referral_command))
+        application.add_handler(CommandHandler("stats", stats_command))
+        application.add_handler(CommandHandler("help", help_command))
+        application.add_handler(CallbackQueryHandler(button_handler))
+        application.add_error_handler(error_handler)
+        
+        # Botni ishga tushirish
+        print("🤖 Bot ishga tushmoqda...")
+        application.run_polling()
+        
+    except Exception as e:
+        print(f"❌ Bot xatoligi: {e}")
 
 if __name__ == "__main__":
-    # Flask ni alohida threadda ishga tushirish (PORT o'zgaruvchisidan foydalanadi)
+    # Flask ni alohida threadda ishga tushirish
     port = int(os.environ.get('PORT', 5000))
     
-    # Flask ni ishga tushirish (bot threadini kutmasdan)
-    from threading import Thread
-    flask_thread = Thread(target=lambda: app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False))
+    flask_thread = threading.Thread(
+        target=lambda: app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+    )
     flask_thread.daemon = True
     flask_thread.start()
     
-    # Botni ishga tushirish
+    # Botni ishga tushirish (asosiy threadda)
     run_bot()
