@@ -4,18 +4,19 @@ import os
 from datetime import datetime
 
 class CertificateGenerator:
-    def __init__(self, template_path='template.png'):
+    def __init__(self, template_path='template.jpg'):  # .jpg qilib o'zgartirildi
         self.template_path = template_path
-        # Render diskiga saqlash
         self.output_dir = os.path.join(os.getcwd(), 'certificates')
         os.makedirs(self.output_dir, exist_ok=True)
     
     def generate(self, user_data, certificate_id):
-        """Sertifikat yaratish"""
         try:
-            # Shablonni tekshirish
+            # .jpg faylni ochish
             if os.path.exists(self.template_path):
                 img = Image.open(self.template_path)
+                # JPG formatida alpha channel bo'lmasligi mumkin, RGB ga o'tkazish
+                if img.mode != 'RGB':
+                    img = img.convert('RGB')
             else:
                 # Agar shablon bo'lmasa, oddiy fon yaratish
                 img = Image.new('RGB', (1200, 800), color='white')
@@ -44,17 +45,19 @@ class CertificateGenerator:
             qr.add_data(f"https://omp.aistudy.uz/certificate?id={certificate_id}")
             qr.make(fit=True)
             qr_img = qr.make_image(fill_color="black", back_color="white")
+            
+            # QR kodni JPG ga moslab qo'yish
+            qr_img = qr_img.convert('RGB')
             img.paste(qr_img, (50, 50))
             
-            # Rasmni saqlash
-            output_path = os.path.join(self.output_dir, f"{certificate_id}.png")
-            img.save(output_path)
+            # Natijani JPG sifatida saqlash
+            output_path = os.path.join(self.output_dir, f"{certificate_id}.jpg")
+            img.save(output_path, 'JPEG', quality=95)
             
             return output_path
             
         except Exception as e:
             print(f"Sertifikat yaratishda xatolik: {e}")
-            # Xatolik bo'lsa, oddiy fayl yaratish
             fallback_path = os.path.join(self.output_dir, f"{certificate_id}.txt")
             with open(fallback_path, 'w') as f:
                 f.write(f"Certificate ID: {certificate_id}\nName: {user_data[2]}")
