@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: sertifikat-bot
+    runtime: python
+    repo: https://github.com/sizning-username/sertifikat-bot  # GitHub repo
+    plan: free
+    region: frankfurt  # Yaqinroq region (Germaniya)
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    envVars:
+      - key: BOT_TOKEN
+        sync: false  # Render dashboardda kiritiladi
+      - key: ADMIN_IDS
+        value: "123456789"  # Sizning Telegram ID
+      - key: PYTHON_VERSION
+        value: 3.11
+    disk:
+      name: certificates-data
+      mountPath: /opt/render/project/src/certificates
+      sizeGB: 1  # Sertifikatlar uchun 1 GB
