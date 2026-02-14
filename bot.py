@@ -2,6 +2,7 @@ import os
 import logging
 import asyncio
 import threading
+import time
 from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
@@ -31,7 +32,7 @@ def home():
 def health():
     return 'OK', 200
 
-# Bot handlerlar (avvalgidek, o'zgarishsiz)
+# Bot handlerlar
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     args = context.args
@@ -97,7 +98,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             text = "👥 **Siz taklif qilganlar:**\n\n"
             for i, (ref_id, username, name, date) in enumerate(referrals, 1):
-                text += f"{i}. {name} (@{username}) - {date[:10]}\n"
+                text += f"{i}. {name} (@{username}) - {str(date)[:10]}\n"
         
         await query.edit_message_text(text, parse_mode='Markdown')
         
@@ -130,9 +131,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(f"❌ Xatolik: {result}")
     
     elif query.data == "leaderboard":
-        stats = db.get_stats()
-        # Bu yerda leaderboard uchun alohida so'rov yozish kerak
-        await query.edit_message_text("🏆 Leaderboard tez orada")
+        # Leaderboard uchun alohida so'rov
+        await query.edit_message_text("🏆 Leaderboard tez orada qo'shiladi")
+        keyboard = [[InlineKeyboardButton("🔙 Orqaga", callback_data="back")]]
+        await query.edit_message_reply_markup(InlineKeyboardMarkup(keyboard))
     
     elif query.data == "admin" and query.from_user.id in ADMIN_IDS:
         stats = db.get_stats()
@@ -145,6 +147,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(text, parse_mode='Markdown')
     
     elif query.data == "back":
+        # Orqaga qaytish - start ni chaqirish
         await start(query, context)
 
 async def referral_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -208,8 +211,10 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # Botni ishga tushirish funksiyasi
 def run_bot():
-    """Botni ishga tushirish - to'g'ri event loop bilan"""
+    """Yagona bot instance ini ishga tushirish"""
     try:
+        print("🤖 Bot ishga tushmoqda...")
+        
         # Yangi event loop yaratish
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -225,22 +230,29 @@ def run_bot():
         application.add_handler(CallbackQueryHandler(button_handler))
         application.add_error_handler(error_handler)
         
-        # Botni ishga tushirish
-        print("🤖 Bot ishga tushmoqda...")
-        application.run_polling()
+        # Botni ishga tushirish (polling)
+        application.run_polling(
+            drop_pending_updates=True,  # Eski xabarlarni o'chirish
+            allowed_updates=['message', 'callback_query']
+        )
         
     except Exception as e:
         print(f"❌ Bot xatoligi: {e}")
+        logger.error(f"Bot xatoligi: {e}")
 
 if __name__ == "__main__":
-    # Flask ni alohida threadda ishga tushirish
+    # PORT ni olish
     port = int(os.environ.get('PORT', 5000))
     
+    # Flask ni alohida threadda ishga tushirish
     flask_thread = threading.Thread(
         target=lambda: app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
     )
     flask_thread.daemon = True
     flask_thread.start()
+    
+    # Botni ishga tushirishdan oldin biroz kutish
+    time.sleep(2)
     
     # Botni ishga tushirish (asosiy threadda)
     run_bot()
