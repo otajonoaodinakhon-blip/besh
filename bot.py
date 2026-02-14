@@ -1,7 +1,6 @@
 import os
 import logging
 import asyncio
-import threading
 from flask import Flask, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
@@ -9,7 +8,18 @@ from config import BOT_TOKEN, ADMIN_IDS
 from database import Database
 from certificate_generator import CertificateGenerator
 
-# Flask health check server (Render uchun)
+# Logging
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+
+# DB va generator
+db = Database()
+cert_gen = CertificateGenerator(template_path='template.jpg')
+
+# Flask app
 app = Flask(__name__)
 
 @app.route('/')
@@ -20,18 +30,7 @@ def home():
 def health():
     return 'OK', 200
 
-# Logging
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
-logger = logging.getLogger(__name__)
-
-# DB va generator (papkalarni Render uchun moslash)
-db = Database()
-cert_gen = CertificateGenerator(template_path='template.png')
-
-# Bot handlerlar (o'zgarishsiz, avvalgi kodi)
+# Bot handlerlar
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     args = context.args
@@ -49,8 +48,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         referred_by=referred_by
     )
     
+    if not user_data:
+        user_data = db.get_user(user.id)
+    
     bot_username = (await context.bot.get_me()).username
-    referral_link = f"https://t.me/{bot_username}?start={user_data[4]}"
+    referral_link = f"https://t.me/{bot_username}?start={user_data.referral_code}"
     
     can_claim, claim_msg = db.can_claim_certificate(user.id)
     
@@ -59,8 +61,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🎓 **Five Million AI Leaders** sertifikatini olish uchun "
         f"10 ta do'stingizni taklif qilishingiz kerak.\n\n"
         f"📊 **Sizning statistikangiz:**\n"
-        f"• Taklif qilganlar: `{user_data[6]}/10`\n"
-        f"• Sertifikat: {'✅ Mavjud' if user_data[7] else '❌ Hali yoq'}\n\n"
+        f"• Taklif qilganlar: `{user_data.referrals_count}/10`\n"
+        f"• Sertifikat: {'✅ Mavjud' if user_data.certificate_claimed else '❌ Hali yoq'}\n\n"
         f"🔗 **Sizning taklif havolangiz:**\n"
         f"`{referral_link}`\n\n"
         f"{claim_msg}"
@@ -163,7 +165,7 @@ async def referral_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     bot_username = (await context.bot.get_me()).username
-    referral_link = f"https://t.me/{bot_username}?start={user_data[4]}"
+    referral_link = f"https://t.me/{bot_username}?start={user_data.referral_code}"
     
     text = (
         f"🔗 **Sizning taklif havolangiz:**\n"
@@ -184,15 +186,15 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     text = (
         f"📊 **Sizning statistikangiz**\n\n"
-        f"🆔 ID: `{user_data[0]}`\n"
-        f"👤 Ism: {user_data[2]}\n"
-        f"👥 Taklif qilganlar: `{user_data[6]}/10`\n"
-        f"🎓 Sertifikat: {'✅ Olgan' if user_data[7] else '❌ Olmagan'}\n"
-        f"📅 Qo'shilgan: {user_data[11][:10]}"
+        f"🆔 ID: `{user_data.user_id}`\n"
+        f"👤 Ism: {user_data.first_name}\n"
+        f"👥 Taklif qilganlar: `{user_data.referrals_count}/10`\n"
+        f"🎓 Sertifikat: {'✅ Olgan' if user_data.certificate_claimed else '❌ Olmagan'}\n"
+        f"📅 Qo'shilgan: {user_data.created_at[:10]}"
     )
     
-    if user_data[7]:
-        text += f"\n📜 Sertifikat ID: `{user_data[8]}`"
+    if user_data.certificate_claimed:
+        text += f"\n📜 Sertifikat ID: `{user_data.certificate_id}`"
     
     await update.message.reply_text(text, parse_mode='Markdown')
 
@@ -213,26 +215,36 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.error(f"Xatolik: {context.error}")
 
+# Botni ishga tushirish
 def run_bot():
-    """Botni alohida threadda ishga tushirish"""
-    app = Application.builder().token(BOT_TOKEN).build()
+    """Botni ishga tushirish (asyncio event loop bilan)"""
+    # Yangi event loop yaratish
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("referral", referral_command))
-    app.add_handler(CommandHandler("stats", stats_command))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CallbackQueryHandler(button_handler))
-    app.add_error_handler(error_handler)
+    # Bot application yaratish
+    application = Application.builder().token(BOT_TOKEN).build()
     
-    print("🤖 Bot ishga tushdi...")
-    app.run_polling()
+    # Handlerlar
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("referral", referral_command))
+    application.add_handler(CommandHandler("stats", stats_command))
+    application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CallbackQueryHandler(button_handler))
+    application.add_error_handler(error_handler)
+    
+    # Botni polling bilan ishga tushirish
+    application.run_polling()
 
 if __name__ == "__main__":
-    # Bot threadini ishga tushirish
-    import threading
-    bot_thread = threading.Thread(target=run_bot, daemon=True)
-    bot_thread.start()
-    
-    # Flask health check serverni ishga tushirish (Render uchun)
+    # Flask ni alohida threadda ishga tushirish (PORT o'zgaruvchisidan foydalanadi)
     port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
+    
+    # Flask ni ishga tushirish (bot threadini kutmasdan)
+    from threading import Thread
+    flask_thread = Thread(target=lambda: app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False))
+    flask_thread.daemon = True
+    flask_thread.start()
+    
+    # Botni ishga tushirish
+    run_bot()
